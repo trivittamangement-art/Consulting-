@@ -15,6 +15,7 @@ conclusão das S.A., prazos, ações de custo) e gera:
     relatorios/AAAA-MM/Pendencias.md           o que falta o gerente informar
 """
 import argparse
+import json
 import re
 from pathlib import Path
 
@@ -35,7 +36,7 @@ MOTIVOS = ["Estoque alto no cliente", "Preço / câmbio", "Perdeu para concorren
            "Problema de embalagem", "Atraso em embarque anterior", "Barreira sanitária / regulatória",
            "Frete / contêiner / logística", "Demanda sazonal", "Crédito / financeiro do cliente",
            "Troca de comprador / estrutura", "Produto indisponível", "Pedido adiado para o mês seguinte",
-           "Cliente encerrou atividade", "Sem retorno do cliente", "Outro"]
+           "Cliente encerrou atividade", "Sem retorno do cliente", "Não cumpriu a periodicidade", "Outro"]
 TIPOS_ADMIN = ("COMPUTADOR", "IMPRESSORA", "SOFTWARE", "PERMISS", "SUPORTE", "TRANSPORTE DE COLAB", "MOTORISTA")
 PRAZO_SUGERIDO = [("ARTE", 3), ("EMBALAGE", 7), ("AMOSTRA", 5), ("CADASTRO", 3), ("CANCELAMENTO", 1),
                   ("ALTERA", 1), ("DOCUMENTO", 5), ("MOTORISTA", 2), ("TRANSPORTE", 2)]
@@ -72,14 +73,35 @@ def apelidos(caminho):
     return {}
 
 
-def casar(nome, base, ap):
-    """Nome do cadastro de periodicidade que corresponde a 'nome' (ou None)."""
+def preferencias(caminho):
+    """dados/preferencias.json: decisões do gerente que valem para todos os meses."""
+    padrao = {"sa_sem_data_conclusao": False, "descritivo_embalagens": True}
+    if caminho.exists():
+        padrao.update(json.loads(caminho.read_text(encoding="utf-8")))
+    return padrao
+
+
+def apelido(nome, ap):
     k = L.norm(nome)
     if k in ap:
         return ap[k]
     for a, c in ap.items():
         if k.startswith(a + " ") or k == a:
             return c
+    return None
+
+
+def eh_novo(nome, ap):
+    """Cliente que o gerente confirmou como novo (apelidos.csv com cliente = NOVO)."""
+    return str(apelido(nome, ap) or "").upper() == "NOVO"
+
+
+def casar(nome, base, ap):
+    """Nome do cadastro de periodicidade que corresponde a 'nome' (ou None)."""
+    c = apelido(nome, ap)
+    if c:
+        return None if c.upper() == "NOVO" else c
+    k = L.norm(nome)
     tok = re.split(r"[\s(]+", k)[0]
     cands = [b for b in base if re.split(r"[\s(]+", L.norm(b))[0] == tok]
     return cands[0] if len(cands) == 1 else None
@@ -143,7 +165,8 @@ def main():
     arq = localizar(a.entrada)
     ap_map = apelidos(RAIZ / "dados" / "apelidos.csv")
     mest = ler_mestre(mestre_path)
-    pend, alertas = [], []  # pendências do gerente; problemas encontrados nos dados
+    pref = preferencias(RAIZ / "dados" / "preferencias.json")
+    pend, alertas, notas = [], [], []  # pendências do gerente; problemas nos dados; avisos sem ação
 
     # ================================================================ meta 2: positivação
     peds, cads = [], []
@@ -204,17 +227,25 @@ def main():
         pend.append(f"Meta 2: lançar os pedidos de {ano} por cliente e mês (aba 'M2 Realizado {ano}' da planilha-mestre, "
                     f"ou mandar a planilha de periodicidade de {ano}). Sem isso não dá para medir a meta de positivação.")
     nao_base = sorted(novos)
-    fat_fora = []
+    novos_conf = [c for c in nao_base if eh_novo(c, ap_map)]
+    novos_duv = [c for c in nao_base if c not in novos_conf]
+    fat_fora, fat_novo = [], []
     for f in arq["cambio"]:
         for cli in sorted(L.ler_faturado_cambio(f).cliente.unique()):
-            if not casar(cli, clientes_base, ap_map):
+            if eh_novo(cli, ap_map):
+                fat_novo.append(cli)
+            elif not casar(cli, clientes_base, ap_map):
                 fat_fora.append(cli)
     if fat_fora:
         alertas.append(f"Clientes faturados em {base_ano} (Faturado x Câmbio) que não aparecem na periodicidade de {base_ano}: "
                        + ", ".join(fat_fora) + ". Se compraram em " + str(base_ano) + ", a base de pedidos está incompleta.")
-    if nao_base:
+    if fat_novo:
+        alertas.append(f"Clientes confirmados como novos na positivação, mas com faturamento em {base_ano} no Faturado x "
+                       f"Câmbio: {', '.join(fat_novo)}. Ter a justificativa pronta caso a apuração do PPR cruze com o "
+                       "faturamento.")
+    if novos_duv:
         alertas.append(f"Clientes com embarque em {ano} que não estão na planilha de periodicidade de {base_ano}: "
-                       + ", ".join(nao_base) + ". Se forem clientes novos, contam a favor dos +20%; se forem nomes "
+                       + ", ".join(novos_duv) + ". Se forem clientes novos, contam a favor dos +20%; se forem nomes "
                        "diferentes de um cliente já cadastrado, informe em dados/apelidos.csv.")
 
     # ================================================================ meta 3a: S.A.
@@ -251,7 +282,10 @@ def main():
             alertas.append("Abas da exportação de S.A. com título de outro mês (ex.: 'RELATÓRIO DE SA - JUNHO' "
                            "em dados de setembro). Ajustar o modelo do relatório.")
         sem_conclusao = unicas["data_conclusao"].isna().all()
-        if sem_conclusao:
+        if sem_conclusao and pref["sa_sem_data_conclusao"]:
+            notas.append("O sistema não exporta a data de conclusão das S.A. O prazo por setor passa a ser medido pela "
+                         "aba 'M3a SA': anotar a data de entrega e as cobranças das S.A. de processo de exportação.")
+        elif sem_conclusao:
             pend.append("Meta 3a: a exportação de S.A. não traz status nem data de conclusão. Exportar do sistema "
                         "com as colunas 'Status' e 'Data de conclusão' (ou preencher na aba 'M3a SA'), e anotar as "
                         "cobranças feitas (quantas e quando). Sem isso não dá para medir prazo por setor.")
@@ -295,7 +329,9 @@ def main():
         pend.append(f"Meta 3c: enviar a aba de {MESES_EXT[mes - 1]} do 'Uso de Embalagens Obsoletas'.")
     vp = estoque_parado.get("valor", pd.DataFrame())
     ultimo_aging = vp["data"].max() if len(vp) else None
-    if ultimo_aging is not None and (ultimo_aging.year, ultimo_aging.month) < (ano, mes):
+    if ultimo_aging is not None and (ultimo_aging.year, ultimo_aging.month) < (ano, mes) and not pref["descritivo_embalagens"]:
+        notas.append(f"Estoque de embalagens por faixa de dias: último retrato de {dt(ultimo_aging)[3:]}.")
+    elif ultimo_aging is not None and (ultimo_aging.year, ultimo_aging.month) < (ano, mes):
         pend.append(f"Meta 3c: atualizar o estoque de embalagens por faixa de dias sem movimentação; o último é de "
                     f"{dt(ultimo_aging)[3:]}. Melhor ainda: o relatório por código (código, descrição, quantidade, valor, "
                     "dias sem movimentação), para casar embalagem parada com pedido em carteira.")
@@ -439,7 +475,7 @@ def main():
         for j, v in enumerate(r[:9], start=1):
             wsx.cell(row=i, column=j, value=v)
     pinta(wsx, f"D2:I{max(2, len(linhas_mot) + 1)}", ENTRADA)
-    lista_suspensa(wsx, "D2:D500", [m_[:40] for m_ in MOTIVOS][:16])
+    lista_suspensa(wsx, "D2:D500", MOTIVOS)
     lista_suspensa(wsx, "H2:H500", ["Alta", "Média", "Baixa"])
     lista_suspensa(wsx, "I2:I500", ["Aberta", "Concluída", "Cancelada"])
 
@@ -735,8 +771,11 @@ def main():
     if sem_compra:
         doc.p(f"Clientes cadastrados sem nenhum pedido em {base_ano} ({len(sem_compra)}): "
               + ", ".join(c for c in sem_compra) + ". Cada um que voltar a comprar é positivação acima da base.")
-    if nao_base:
-        doc.p(f"Clientes com embarque em {ano} que não estão na base de {base_ano}: {', '.join(nao_base)}. "
+    if novos_conf:
+        doc.p(f"Clientes novos em {ano} (confirmados pelo gerente; fora da base de {base_ano}): {', '.join(novos_conf)}. "
+              "Cada pedido deles é positivação acima da base e soma para os +20%.")
+    if novos_duv:
+        doc.p(f"Clientes com embarque em {ano} que não estão na base de {base_ano}: {', '.join(novos_duv)}. "
               "Se forem novos, somam para os +20%.")
     if evid:
         doc.h(f"2.1 Embarques de {ano} já identificados nos arquivos (para conferir e lançar)", 3)
@@ -755,9 +794,19 @@ def main():
     doc.tabela(pd.DataFrame([{"Mês": MESES_TXT[m_ - 1], f"Meta {ano}": n(meta_mes[m_]),
                               "Clientes que compraram nesse mês em " + str(base_ano): ", ".join(
                                   f"{c} ({n(base.loc[c, m_], 0)})" for c in cs)} for m_, cs in prox.items()]))
-    obs_b = cad_b[cad_b.observacao.notna()] if "observacao" in cad_b else pd.DataFrame()
-    if not len(obs_b):
-        pend.append(f"Meta 2: para cada cliente marcado 'NÃO' em 'Cumprido?', uma linha de motivo ({', '.join(c for c in cad_b[cad_b.cumprido.astype(str).str.upper().str.startswith('N')].index)}).")
+    nao_cump = list(cad_b[cad_b.cumprido.astype(str).str.upper().str.startswith("N")].index) if "cumprido" in cad_b else []
+    mot_base = {r[1]: r for r in linhas_mot if str(r[0]) == str(base_ano)}
+    if nao_cump:
+        doc.h(f"2.4 Clientes que não cumpriram a periodicidade em {base_ano}", 3)
+        doc.tabela(pd.DataFrame([{"Cliente": c, "Frequência": cad_b.loc[c, "frequencia_txt"],
+                                  f"Pedidos {base_ano}": n(base.loc[c].sum(), 0) if c in base.index else "",
+                                  "Motivo": (mot_base[c][3] if c in mot_base and pd.notna(mot_base[c][3]) else "PENDENTE"),
+                                  "Detalhe": (mot_base[c][4] if c in mot_base and pd.notna(mot_base[c][4]) else ""),
+                                  "Ação": (mot_base[c][5] if c in mot_base and pd.notna(mot_base[c][5]) else "")}
+                                 for c in nao_cump]))
+        faltam = [c for c in nao_cump if c not in mot_base]
+        if faltam:
+            pend.append(f"Meta 2: motivo de não cumprimento da periodicidade em {base_ano} ({', '.join(faltam)}).")
 
     # --- meta 3a
     doc.h("3. Meta 3a · Gestão das solicitações de atividade (S.A.)", 2)
@@ -778,9 +827,14 @@ def main():
         canc = unicas[unicas.tipo.str.contains("CANCELAMENTO DE PEDIDO|ALTERAÇÃO DE PEDIDO", regex=True)]
         if len(canc):
             peds_c = sorted({p for s_ in canc.pedidos_citados for p in s_.split(", ") if p})
-            doc.p(f"Pedidos cancelados ou com data de entrega alterada no mês: {', '.join(peds_c)}. Cancelamento e "
-                  "adiamento afetam a meta de positivação e o prazo; o motivo de cada um deve entrar no relatório.")
-            pend.append(f"Meta 3a/2: motivo dos pedidos cancelados ou com entrega alterada ({', '.join(peds_c)}).")
+            doc.p(f"Pedidos cancelados ou com data de entrega alterada no mês: {', '.join(peds_c)}.")
+            doc.tabela(pd.DataFrame({"S.A.": canc.codigo, "Tipo": canc.tipo, "Pedidos": canc.pedidos_citados,
+                                     "Motivo": canc.obs.fillna("PENDENTE")}))
+            if canc.obs.isna().any():
+                pend.append(f"Meta 3a/2: motivo dos pedidos cancelados ou com entrega alterada ({', '.join(peds_c)}).")
+            elif canc.obs.astype(str).str.contains("ajuste|corre", case=False).any():
+                doc.p("Os cancelamentos foram feitos para ajuste ou correção do pedido, não por perda de venda. Se o pedido "
+                      "foi reemitido, ele continua contando na positivação; o cancelado não deve ser contado em dobro.")
         if len(usuarios):
             doc.p("Solicitações por usuário (aba de percentuais da exportação): " + "; ".join(
                 f"{r.usuario.title()} {n(r.solicitacoes, 0)}" for r in usuarios.itertuples()) + ".")
@@ -846,8 +900,9 @@ def main():
                    "Documentos e courier: enviar documentos digitais quando o país aceitar; cada envio de courier evitado é economia.",
                    "Inspeções: agendar no mesmo dia para pedidos que embarcam juntos."]
     doc.lista(candidatas)
-    pend.append("Meta 3b: valores do mês para as ações acima (custo de referência e custo realizado de cada uma) e o que é "
-                "a coluna 'Outros' do Controle de Gastos.")
+    if not [r for r in acoes_mes if r[8] != "Automático"]:
+        doc.p("Sem outras ações de custo com valor registradas no mês. Quando houver, basta informar a ação, quanto "
+              "custaria e quanto custou; o agente lança na aba 'M3b Ações'.")
 
     # --- meta 3c
     doc.h("5. Meta 3c · Giro de embalagens", 2)
@@ -892,16 +947,20 @@ def main():
                                "Variação": n(a1 - a0, 0) if pd.notna(a0) and pd.notna(a1) else ""})
             doc.p(f"{cli}: estoque por código de {MESES_TXT[ini_ - 1]} a {MESES_TXT[fim_ - 1]}.")
             doc.tabela(pd.DataFrame(linhas))
-    doc.p("Descritivo para a produção: com a lista de pedidos em carteira (cliente, produto, idioma, quantidade) e o "
-          "estoque parado por código, o agente monta a sugestão pedido a pedido (mesmo idioma, bonificação, caixa de reforço).")
-    pend.append("Meta 3c: lista de pedidos em carteira para outubro/novembro (cliente, produto, idioma, quantidade) para o "
-                "descritivo de embalagens da produção.")
+    if pref["descritivo_embalagens"]:
+        doc.p("Descritivo para a produção: com a lista de pedidos em carteira (cliente, produto, idioma, quantidade) e o "
+              "estoque parado por código, o agente monta a sugestão pedido a pedido (mesmo idioma, bonificação, caixa de reforço).")
+        pend.append("Meta 3c: lista de pedidos em carteira para os próximos meses (cliente, produto, idioma, quantidade) "
+                    "para o descritivo de embalagens da produção.")
 
     # --- dados com problema e pendências
     doc.h("6. Problemas encontrados nas planilhas de origem", 2)
     doc.lista(alertas or ["Nenhum."])
-    doc.h("7. O que falta para fechar o mês", 2)
-    doc.lista(pend)
+    if notas:
+        doc.h("7. Observações", 2)
+        doc.lista(notas)
+    doc.h(f"{8 if notas else 7}. O que falta para fechar o mês", 2)
+    doc.lista(pend or ["Nada pendente."])
 
     nome = f"PPR_Comex_{a.mes}"
     doc.docx(saida / f"{nome}.docx")

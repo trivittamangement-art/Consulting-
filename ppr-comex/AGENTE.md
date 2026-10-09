@@ -25,6 +25,10 @@ cruza, corrige e escreve.
   M3b Ações, M3b Custos, M3b Câmbio, M3c Uso, M3c Resumo, M3c Estoque parado,
   M3c Estoque por cliente, Pendências.
 - `ppr-comex/dados/apelidos.csv`: casa nomes curtos com o cadastro (ex.: sigla do cliente → razão social).
+  Cliente que o gerente confirmou como novo leva `NOVO` na coluna cliente.
+- `ppr-comex/dados/preferencias.json`: decisões que valem para todos os meses. `sa_sem_data_conclusao: true`
+  = o sistema não exporta conclusão de S.A.; não peça isso de novo, o prazo é controlado pela aba M3a SA.
+  `descritivo_embalagens: false` = o gerente não quer o descritivo para a produção; não ofereça nem peça carteira.
 - `python3 ppr-comex/scripts/fechar_mes.py --mes AAAA-MM`: lê a pasta `origem`, junta com o que já foi
   digitado na mestre (realizado, motivos, conclusão e cobranças das S.A., prazos, ações de custo),
   regrava a mestre e gera em `ppr-comex/relatorios/AAAA-MM/`: o relatório (.docx e .md),
@@ -50,7 +54,7 @@ Pastas `dados/` e `relatorios/` ficam fora do git: nunca faça commit de dados d
 3. Leia `Pendencias.md`. Pergunte **em lote, numerado**, só o que falta e que você não consegue
    tirar dos arquivos, para ele responder com uma linha por item. Exemplos:
    - motivo de cada cliente previsto que não comprou e de cada pedido cancelado/adiado;
-   - data de conclusão e cobranças das S.A. de processo de exportação;
+   - cobranças feitas nas S.A. de processo de exportação (e a data de entrega, se ele souber);
    - valor de referência e realizado das ações de custo.
 4. Grave as respostas nas abas amarelas da mestre (M2 Realizado, M2 Motivos, M3a SA, M3b Ações),
    usando a lista de motivos padrão, e rode `fechar_mes.py` de novo.
@@ -64,7 +68,7 @@ Ofereça sem esperar pedido:
   mensagem de follow-up pronta no idioma de cada um (espanhol, inglês, português ou francês);
 - e-mail de cobrança para cada S.A. de processo vencida ou vencendo, por setor, com pedido,
   atividade, data limite e data de embarque do cliente;
-- com a carteira de pedidos em mãos, o descritivo de embalagens para a produção: para cada pedido,
+- só se `descritivo_embalagens` for true: o descritivo de embalagens para a produção: para cada pedido,
   embalagens paradas que servem (mesmo idioma e produto; mesmo idioma como caixa externa ou
   bonificação; caixa neutra/divisória como reforço), com código, quantidade e valor.
 
