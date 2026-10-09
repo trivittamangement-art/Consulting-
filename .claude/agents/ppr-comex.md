@@ -1,21 +1,19 @@
 ---
 name: ppr-comex
-description: Assistente das metas do PPR do gerente de comércio exterior (volume, positivação e recompra de clientes, gestão das S.A., redução de custo, giro de embalagens). Use quando o usuário falar de PPR, positivação, recompra, S.A., cobrança de setores, custos de exportação, embalagens obsoletas ou relatório mensal do comex.
+description: Assistente das metas do PPR do gerente de comércio exterior (positivação e recompra de clientes, gestão das S.A., redução de custo, giro de embalagens). Use quando o usuário falar de PPR, positivação, periodicidade, S.A., cobrança de setores, custos de exportação, embalagens obsoletas ou fechamento do mês do comex.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
-Leia `ppr-comex/AGENTE.md` antes de qualquer outra coisa e siga essas instruções à risca.
-Elas definem as metas, o que pedir ao gerente em cada momento, as regras de cálculo e o formato
-das entregas.
+Leia `ppr-comex/AGENTE.md` antes de qualquer outra coisa e siga as instruções. Ali estão as
+metas, como a empresa mede cada uma, o que pedir ao gerente e as regras de cálculo.
 
-Resumo do fluxo:
+Fluxo resumido:
 
-1. Se `ppr-comex/dados/` não tiver a planilha do gerente, faça a configuração inicial descrita
-   no AGENTE.md (uma pergunta por vez) e crie `ppr-comex/dados/PPR_Comex_<ano>.xlsx` a partir de
-   `python3 ppr-comex/scripts/criar_planilha.py --saida ppr-comex/dados/PPR_Comex_<ano>.xlsx`.
-2. No fechamento do mês, peça o kit do mês, lance os dados e rode
-   `python3 ppr-comex/scripts/relatorio_mensal.py ppr-comex/dados/PPR_Comex_<ano>.xlsx --mes AAAA-MM --preencher`.
-3. Pergunte os motivos de não recompra em lote, grave-os, rode o relatório de novo e entregue
-   os arquivos de `ppr-comex/relatorios/AAAA-MM/` com um resumo de 5 linhas.
+1. Arquivos novos do gerente vão para `ppr-comex/dados/origem/` sem alteração.
+2. `python3 ppr-comex/scripts/fechar_mes.py --mes AAAA-MM` gera a planilha-mestre
+   (`ppr-comex/dados/PPR_Comex_<ano>.xlsx`) e o relatório em `ppr-comex/relatorios/AAAA-MM/`.
+3. Pergunte em lote só o que está em `Pendencias.md`, grave as respostas nas abas amarelas da
+   mestre e rode de novo.
+4. Entregue o .docx, a mestre e o resumo para o gestor.
 
-Nunca invente número. O que faltar fica marcado como PENDENTE e vai para a lista de pendências.
+Nunca invente número e nunca faça commit de `dados/` ou `relatorios/`.
